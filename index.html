@@ -14223,10 +14223,11 @@ const BatchManager = {
         const productCode = (document.getElementById('add-batch-product-code')?.value?.trim() || '').toUpperCase();
         const category = document.getElementById('add-batch-category')?.value || 'ALKYD';
         const lotNo = document.getElementById('add-batch-lot-no')?.value?.trim();
-        const volume = parseFloat(document.getElementById('add-batch-volume')?.value) || 0;
-        const density = parseFloat(document.getElementById('add-batch-density')?.value) || 0;
-        const measuredViscosity = parseFloat(document.getElementById('add-batch-viscosity')?.value) || 0;
-        const dirtySolventKg = parseFloat(document.getElementById('add-batch-dirty-solvent')?.value) || 0;
+        // Ép các chỉ số đo lường (thể tích, tỷ trọng, độ nhớt, dung môi bẩn) sang kiểu Number (parseFloat/Number)
+        const volume = Number(parseFloat(document.getElementById('add-batch-volume')?.value) || 0);
+        const density = Number(parseFloat(document.getElementById('add-batch-density')?.value) || 0);
+        const measuredViscosity = Number(parseFloat(document.getElementById('add-batch-viscosity')?.value) || 0);
+        const dirtySolventKg = Number(parseFloat(document.getElementById('add-batch-dirty-solvent')?.value) || 0);
         const status = document.getElementById('add-batch-status')?.value || 'PASS';
         const riskLevel = document.getElementById('add-batch-risk-level')?.value || 'LOW';
         const notes = document.getElementById('add-batch-notes')?.value?.trim() || '';
@@ -14251,7 +14252,7 @@ const BatchManager = {
             compensatedViscosity = comp.compensatedVal;
         }
 
-        const newBatch = {
+        const batchData = {
             id: 'BATCH-MANUAL-' + Date.now(),
             ticketNo: ticketNo,
             productCode: productCode || 'CHƯA ĐẶT MÃ',
@@ -14262,58 +14263,38 @@ const BatchManager = {
             actualVolumeLiters: volume,
             density: density,
             measuredViscosity: measuredViscosity,
-            compensatedViscosity: compensatedViscosity,
+            testTempC: 25,
+            compensatedViscosity: Number(compensatedViscosity || measuredViscosity),
             dirtySolventKg: dirtySolventKg,
+            finenessMicron: 25,
+            glossPercent: 85,
+            colorScore: 'Đạt chuẩn',
             status: status,
             riskLevel: riskLevel,
-            riskCategory: dirtySolventKg > 0 ? 'DUNG MÔI BẨN' : (riskLevel === 'CRITICAL' ? 'BÁO ĐỘNG ĐỎ' : 'Nhập thủ công'),
-            chemicalRisk: dirtySolventKg > 0 ? 'Lô nạp ' + dirtySolventKg + 'kg dung môi súc bồn. Cấm xuất xưởng!' : 'Dữ liệu chuyên môn nhập thủ công bởi ' + (window.RBACManager ? window.RBACManager.getActiveUser().name : 'KCS'),
             notes: notes,
             date: todayStr,
             mfgDate: todayStr,
-            expDate: new Date(now.getTime() + 365*24*60*60*1000).toISOString().split('T')[0],
-            isManagementModified: true,
+            expDate: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
             isRework: status === 'REWORK' || dirtySolventKg > 0,
-            ticketType: 'Phiếu Nhập Thủ Công (Manual)',
+            reworkDetails: notes || 'Thêm thủ công bởi ' + (window.RBACManager ? window.RBACManager.getActiveUser().name : 'KCS'),
+            packageSpec: 'Thực tế đóng ' + volume + ' (Lít/Kg)',
             lossPercent: 0.0,
-            finenessMicron: 25,
-            testTempC: 25,
-            reworkDetails: notes || 'Thêm thủ công bởi ' + (window.RBACManager ? window.RBACManager.getActiveUser().name : 'KCS')
+            created_at: new Date().toISOString()
         };
 
-        // 1. Chuyển đổi dữ liệu sang định dạng bảng Supabase public.batches
-        const dbRow = {
-            id: newBatch.id,
-            ticket_no: newBatch.ticketNo,
-            product_code: newBatch.productCode,
-            product_name: newBatch.productName,
-            category: newBatch.category,
-            lot_no: newBatch.lotNo,
-            order_volume: Number(newBatch.orderVolumeLiters || 0),
-            actual_volume: Number(newBatch.actualVolumeLiters || 0),
-            density: Number(newBatch.density || 0),
-            measured_viscosity: Number(newBatch.measuredViscosity || 0),
-            dirty_solvent_kg: Number(newBatch.dirtySolventKg || 0),
-            status: newBatch.status || 'PASS',
-            risk_level: newBatch.riskLevel || 'LOW',
-            notes: newBatch.notes || '',
-            created_at: new Date().toISOString(),
-            raw_data: newBatch
-        };
-
-        // 2. Lưu trực tiếp lên Supabase Cloud qua upsert
+        // Chuyển logic lưu mẻ sơn mới từ cục bộ sang lưu đám mây: Thực hiện await window.supabaseClient.from('batches').upsert(batchData)
         if (window.supabaseClient) {
             try {
                 const { data, error } = await window.supabaseClient
                     .from('batches')
-                    .upsert(dbRow, { onConflict: 'id' });
+                    .upsert(batchData, { onConflict: 'id' });
 
                 if (error) {
                     console.error('[Supabase] Lỗi khi upsert mẻ mới:', error);
                     App.showToast('Lỗi lưu Supabase: ' + (error.message || error), 'error');
                     return;
                 }
-                console.log('[Supabase] Đã upsert mẻ thành công lên Cloud:', newBatch.id);
+                console.log('[Supabase] Đã upsert mẻ thành công lên Cloud:', batchData.id);
             } catch (err) {
                 console.error('[Supabase] Ngoại lệ khi upsert Supabase:', err);
                 App.showToast('Lỗi kết nối Supabase Cloud!', 'error');
@@ -14321,15 +14302,15 @@ const BatchManager = {
             }
         }
 
-        // 3. Cập nhật mảng cục bộ App.state.batches
+        // Cập nhật mảng cục bộ App.state.batches
         if (!Array.isArray(App.state.batches)) {
             App.state.batches = [];
         }
-        const existingIdx = App.state.batches.findIndex(b => b.id === newBatch.id);
+        const existingIdx = App.state.batches.findIndex(b => b.id === batchData.id);
         if (existingIdx === -1) {
-            App.state.batches.unshift(newBatch);
+            App.state.batches.unshift(batchData);
         } else {
-            App.state.batches[existingIdx] = newBatch;
+            App.state.batches[existingIdx] = batchData;
         }
 
         // Lưu vào LocalStorage & Cập nhật thống kê
@@ -14347,28 +14328,29 @@ const BatchManager = {
 
         // Ghi nhật ký kiểm toán hệ thống
         if (window.SecurityManager && typeof window.SecurityManager.logAudit === 'function') {
-            window.SecurityManager.logAudit('Thêm Mẻ Sơn Mới', 'Tạo mẻ ' + newBatch.productCode + ' (Lô ' + newBatch.lotNo + ')', 'SUCCESS');
+            window.SecurityManager.logAudit('Thêm Mẻ Sơn Mới', 'Tạo mẻ ' + batchData.productCode + ' (Lô ' + batchData.lotNo + ')', 'SUCCESS');
         }
     },
 
     realtimeChannel: null,
 
-    // 1. HÀM ĐỒNG BỘ DỮ LIỆU KHI KHỞI ĐỘNG
-    async syncBatchesFromCloud() {
+    // 1. Viết hàm syncCloudBatches()
+    async syncCloudBatches() {
         if (!window.supabaseClient) {
             console.warn('[Supabase] window.supabaseClient chưa được khởi tạo.');
             return;
         }
 
         try {
-            console.log('[Supabase] Bắt đầu đồng bộ danh sách mẻ sơn từ Supabase Cloud...');
+            console.log('[Supabase] Bắt đầu đọc dữ liệu từ Cloud: from(batches).select(*)...');
+            // Đọc dữ liệu từ Supabase: window.supabaseClient.from('batches').select('*').order('created_at', { ascending: false })
             let { data, error } = await window.supabaseClient
                 .from('batches')
                 .select('*')
                 .order('created_at', { ascending: false });
 
             if (error) {
-                console.warn('[Supabase] Lỗi order created_at, truy vấn lại không sắp xếp:', error);
+                console.warn('[Supabase] Lỗi order created_at, truy vấn lại select(*):', error);
                 const retry = await window.supabaseClient.from('batches').select('*');
                 data = retry.data;
                 error = retry.error;
@@ -14382,31 +14364,42 @@ const BatchManager = {
                 return;
             }
 
-            // Nếu bảng trên Supabase rỗng (data.length === 0): Tự động nạp INITIAL_BATCHES lên Supabase
+            // Nếu Supabase trống (data.length === 0): Tự động nạp toàn bộ danh sách INITIAL_BATCHES hiện có lên bảng batches (seed data lần đầu), sau đó gán vào App.state.batches
             if (!data || data.length === 0) {
-                console.log('[Supabase] Bảng batches rỗng. Bắt đầu đẩy toàn bộ INITIAL_BATCHES lên Cloud...');
+                console.log('[Supabase] Bảng batches trống (data.length === 0). Bắt đầu nạp INITIAL_BATCHES lên Supabase Cloud...');
                 const seedList = (typeof INITIAL_BATCHES !== 'undefined' && Array.isArray(INITIAL_BATCHES))
                     ? INITIAL_BATCHES
                     : (window.FACTORY_SAMPLE_DATA && window.FACTORY_SAMPLE_DATA.BATCHES ? window.FACTORY_SAMPLE_DATA.BATCHES : []);
 
                 if (seedList.length > 0) {
                     const rowsToUpload = seedList.map(item => ({
-                        id: item.id || ('BATCH-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7)),
-                        ticket_no: item.ticketNo || item.ticket_no || '',
-                        product_code: item.productCode || item.product_code || '',
-                        product_name: item.productName || item.product_name || '',
-                        category: item.category || '',
-                        lot_no: item.lotNo || item.lot_no || '',
-                        order_volume: Number(item.orderVolumeLiters ?? item.order_volume ?? 0),
-                        actual_volume: Number(item.actualVolumeLiters ?? item.actual_volume ?? 0),
+                        id: String(item.id || ('BATCH-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7))),
+                        ticketNo: String(item.ticketNo || item.ticket_no || ''),
+                        redCode: String(item.redCode || item.red_code || ''),
+                        productCode: String(item.productCode || item.product_code || ''),
+                        productName: String(item.productName || item.product_name || ''),
+                        category: String(item.category || 'ALKYD'),
+                        lotNo: String(item.lotNo || item.lot_no || ''),
+                        mfgDate: item.mfgDate || item.date || new Date().toISOString().split('T')[0],
+                        expDate: item.expDate || '',
+                        date: item.date || item.mfgDate || new Date().toISOString().split('T')[0],
+                        orderVolumeLiters: Number(item.orderVolumeLiters ?? item.order_volume ?? 0),
+                        actualVolumeLiters: Number(item.actualVolumeLiters ?? item.actual_volume ?? 0),
                         density: Number(item.density ?? 0),
-                        measured_viscosity: Number(item.measuredViscosity ?? item.measured_viscosity ?? 0),
-                        dirty_solvent_kg: Number(item.dirtySolventKg ?? item.dirty_solvent_kg ?? 0),
-                        status: item.status || 'PASS',
-                        risk_level: item.riskLevel || item.risk_level || 'LOW',
-                        notes: item.notes || '',
-                        created_at: item.created_at || (item.date ? new Date(item.date).toISOString() : new Date().toISOString()),
-                        raw_data: item
+                        measuredViscosity: Number(item.measuredViscosity ?? item.measured_viscosity ?? 0),
+                        testTempC: Number(item.testTempC ?? 25),
+                        compensatedViscosity: Number(item.compensatedViscosity ?? item.measuredViscosity ?? 0),
+                        finenessMicron: Number(item.finenessMicron ?? 0),
+                        glossPercent: Number(item.glossPercent ?? 0),
+                        colorScore: String(item.colorScore || 'Đạt chuẩn'),
+                        status: String(item.status || 'PASS'),
+                        isRework: Boolean(item.isRework),
+                        reworkDetails: String(item.reworkDetails || ''),
+                        packageSpec: String(item.packageSpec || ''),
+                        lossPercent: Number(item.lossPercent ?? 0),
+                        notes: String(item.notes || ''),
+                        dirtySolventKg: Number(item.dirtySolventKg ?? item.dirty_solvent_kg ?? 0),
+                        riskLevel: String(item.riskLevel || item.risk_level || 'LOW')
                     }));
 
                     const CHUNK_SIZE = 50;
@@ -14416,7 +14409,7 @@ const BatchManager = {
                             .from('batches')
                             .upsert(chunk, { onConflict: 'id' });
                         if (seedErr) {
-                            console.error('[Supabase] Lỗi khi đẩy chunk lên Cloud:', seedErr);
+                            console.error('[Supabase] Lỗi khi nạp chunk batches lên Cloud:', seedErr);
                         }
                     }
                     console.log(`[Supabase] Đã tự động nạp ${rowsToUpload.length} mẻ chuẩn lên Supabase Cloud.`);
@@ -14424,42 +14417,20 @@ const BatchManager = {
 
                 App.state.batches = [...seedList];
             } else {
-                // Nếu bảng trên Supabase đã có dữ liệu: Lấy về và map ngược lại
-                console.log(`[Supabase] Đã nhận ${data.length} bản ghi từ Cloud.`);
-                const parsedBatches = data.map(row => {
-                    let base = {};
-                    if (row.raw_data) {
-                        try {
-                            base = typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data;
-                        } catch (e) {
-                            base = {};
-                        }
-                    }
-                    return {
-                        ...base,
-                        id: row.id,
-                        ticketNo: row.ticket_no || base.ticketNo || '',
-                        productCode: row.product_code || base.productCode || '',
-                        productName: row.product_name || base.productName || '',
-                        category: row.category || base.category || '',
-                        lotNo: row.lot_no || base.lotNo || '',
-                        orderVolumeLiters: row.order_volume !== null && row.order_volume !== undefined ? Number(row.order_volume) : (base.orderVolumeLiters || 0),
-                        actualVolumeLiters: row.actual_volume !== null && row.actual_volume !== undefined ? Number(row.actual_volume) : (base.actualVolumeLiters || 0),
-                        density: row.density !== null && row.density !== undefined ? Number(row.density) : (base.density || 0),
-                        measuredViscosity: row.measured_viscosity !== null && row.measured_viscosity !== undefined ? Number(row.measured_viscosity) : (base.measuredViscosity || 0),
-                        dirtySolventKg: row.dirty_solvent_kg !== null && row.dirty_solvent_kg !== undefined ? Number(row.dirty_solvent_kg) : (base.dirtySolventKg || 0),
-                        status: row.status || base.status || 'PASS',
-                        riskLevel: row.risk_level || base.riskLevel || 'LOW',
-                        notes: row.notes || base.notes || '',
-                        created_at: row.created_at || base.created_at || new Date().toISOString(),
-                        date: base.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-                        mfgDate: base.mfgDate || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-                        riskCategory: base.riskCategory || (row.dirty_solvent_kg > 0 ? 'DUNG MÔI BẨN' : (row.risk_level === 'CRITICAL' ? 'BÁO ĐỘNG ĐỎ' : 'Nhập thủ công')),
-                        chemicalRisk: base.chemicalRisk || (row.dirty_solvent_kg > 0 ? `Lô nạp ${row.dirty_solvent_kg}kg dung môi súc bồn. Cấm xuất xưởng!` : 'Dữ liệu Supabase Cloud')
-                    };
-                });
-
-                App.state.batches = parsedBatches;
+                // Nếu Supabase đã có dữ liệu: Gán App.state.batches = data và gọi ngay hàm render bảng window.BatchManager.renderBatchTable(...)
+                console.log(`[Supabase] Đã nhận ${data.length} bản ghi từ Supabase Cloud.`);
+                App.state.batches = data.map(b => ({
+                    ...b,
+                    orderVolumeLiters: Number(b.orderVolumeLiters ?? 0),
+                    actualVolumeLiters: Number(b.actualVolumeLiters ?? b.orderVolumeLiters ?? 0),
+                    density: Number(b.density ?? 0),
+                    measuredViscosity: Number(b.measuredViscosity ?? 0),
+                    compensatedViscosity: Number(b.compensatedViscosity ?? b.measuredViscosity ?? 0),
+                    dirtySolventKg: Number(b.dirtySolventKg ?? 0),
+                    lossPercent: Number(b.lossPercent ?? 0),
+                    riskCategory: b.riskCategory || (b.dirtySolventKg > 0 ? 'DUNG MÔI BẨN' : (b.riskLevel === 'CRITICAL' ? 'BÁO ĐỘNG ĐỎ' : (b.isRework ? 'TÁI CHẾ' : 'Chuẩn công nghệ'))),
+                    chemicalRisk: b.chemicalRisk || (b.dirtySolventKg > 0 ? `Lô nạp ${b.dirtySolventKg}kg dung môi súc bồn. Cấm xuất xưởng!` : (b.riskLevel === 'CRITICAL' ? 'Nguy cơ cao - Cần kiểm soát chặt' : 'Các chỉ tiêu lưu biến và hàm lượng rắn đạt giới hạn kỹ thuật cho phép.'))
+                }));
             }
 
             // Cập nhật bộ nhớ cục bộ & Render lại bảng
@@ -14472,134 +14443,70 @@ const BatchManager = {
                 window.App.showToast(`Đã đồng bộ ${App.state.batches.length} mẻ từ Supabase Cloud!`, 'info');
             }
         } catch (err) {
-            console.error('[Supabase] Ngoại lệ khi syncBatchesFromCloud:', err);
+            console.error('[Supabase] Ngoại lệ khi syncCloudBatches:', err);
         }
     },
 
-    // 2. LẮNG NGHE REALTIME ĐA THIẾT BỊ
-    subscribeBatchRealtime() {
+    // 2. Viết hàm listenCloudRealtime()
+    listenCloudRealtime() {
         if (!window.supabaseClient) {
             console.warn('[Supabase Realtime] window.supabaseClient chưa sẵn sàng.');
             return null;
         }
 
         if (this.realtimeChannel) {
-            window.supabaseClient.removeChannel(this.realtimeChannel);
+            try {
+                window.supabaseClient.removeChannel(this.realtimeChannel);
+            } catch(e) {}
             this.realtimeChannel = null;
         }
 
-        const parseCloudRow = (row) => {
-            if (!row) return null;
-            let base = {};
-            if (row.raw_data) {
-                try {
-                    base = typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data;
-                } catch (e) {
-                    base = {};
-                }
-            }
-            return {
-                ...base,
-                id: row.id,
-                ticketNo: row.ticket_no || base.ticketNo || '',
-                productCode: row.product_code || base.productCode || '',
-                productName: row.product_name || base.productName || '',
-                category: row.category || base.category || '',
-                lotNo: row.lot_no || base.lotNo || '',
-                orderVolumeLiters: row.order_volume !== null && row.order_volume !== undefined ? Number(row.order_volume) : (base.orderVolumeLiters || 0),
-                actualVolumeLiters: row.actual_volume !== null && row.actual_volume !== undefined ? Number(row.actual_volume) : (base.actualVolumeLiters || 0),
-                density: row.density !== null && row.density !== undefined ? Number(row.density) : (base.density || 0),
-                measuredViscosity: row.measured_viscosity !== null && row.measured_viscosity !== undefined ? Number(row.measured_viscosity) : (base.measuredViscosity || 0),
-                dirtySolventKg: row.dirty_solvent_kg !== null && row.dirty_solvent_kg !== undefined ? Number(row.dirty_solvent_kg) : (base.dirtySolventKg || 0),
-                status: row.status || base.status || 'PASS',
-                riskLevel: row.risk_level || base.riskLevel || 'LOW',
-                notes: row.notes || base.notes || '',
-                created_at: row.created_at || base.created_at || new Date().toISOString(),
-                date: base.date || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-                mfgDate: base.mfgDate || (row.created_at ? row.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
-                riskCategory: base.riskCategory || (row.dirty_solvent_kg > 0 ? 'DUNG MÔI BẨN' : (row.risk_level === 'CRITICAL' ? 'BÁO ĐỘNG ĐỎ' : 'Nhập thủ công')),
-                chemicalRisk: base.chemicalRisk || (row.dirty_solvent_kg > 0 ? `Lô nạp ${row.dirty_solvent_kg}kg dung môi súc bồn. Cấm xuất xưởng!` : 'Dữ liệu Supabase Cloud')
-            };
-        };
-
-        const channel = window.supabaseClient.channel('realtime-batches-channel')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, (payload) => {
-                console.log('[Supabase Realtime] Event nhận được:', payload);
-                const eventType = payload.eventType;
-                const newRecord = payload.new;
-                const oldRecord = payload.old;
-
-                if (!Array.isArray(App.state.batches)) {
-                    App.state.batches = [];
-                }
-
-                if (eventType === 'INSERT') {
-                    const newBatch = parseCloudRow(newRecord);
-                    if (newBatch) {
-                        const existingIdx = App.state.batches.findIndex(b => b.id === newBatch.id);
-                        if (existingIdx === -1) {
-                            App.state.batches.unshift(newBatch);
-                        } else {
-                            App.state.batches[existingIdx] = newBatch;
-                        }
-                        if (window.App && typeof window.App.showToast === 'function') {
-                            window.App.showToast(`[Realtime] Mẻ mới: ${newBatch.productCode} (Lô ${newBatch.lotNo})`, 'info');
-                        }
-                    }
-                } else if (eventType === 'UPDATE') {
-                    const updatedBatch = parseCloudRow(newRecord);
-                    if (updatedBatch) {
-                        const existingIdx = App.state.batches.findIndex(b => b.id === updatedBatch.id);
-                        if (existingIdx !== -1) {
-                            App.state.batches[existingIdx] = { ...App.state.batches[existingIdx], ...updatedBatch };
-                        } else {
-                            App.state.batches.unshift(updatedBatch);
-                        }
-                        if (window.App && typeof window.App.showToast === 'function') {
-                            window.App.showToast(`[Realtime] Cập nhật: ${updatedBatch.productCode} (Lô ${updatedBatch.lotNo})`, 'info');
-                        }
-                    }
-                } else if (eventType === 'DELETE') {
-                    const delId = oldRecord ? oldRecord.id : null;
-                    if (delId) {
-                        App.state.batches = App.state.batches.filter(b => b.id !== delId);
-                        if (window.App && typeof window.App.showToast === 'function') {
-                            window.App.showToast('[Realtime] Một mẻ sơn đã được xóa từ thiết bị khác.', 'warning');
-                        }
-                    }
-                }
-
-                // Cập nhật giao diện tự động không cần F5
-                if (typeof App.saveStateToStorage === 'function') App.saveStateToStorage();
-                if (typeof App.updateTopStats === 'function') App.updateTopStats();
-                if (window.BatchManager && typeof window.BatchManager.renderBatchTable === 'function') {
-                    window.BatchManager.renderBatchTable(App.state.batches, App.state.selectedFilterDate, App.state.searchTerm);
+        // Đăng ký lắng nghe kênh Supabase Realtime: window.supabaseClient.channel('batches-channel').on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, () => { syncCloudBatches(); }).subscribe()
+        const channel = window.supabaseClient.channel('batches-channel')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'batches' }, () => {
+                console.log('[Supabase Realtime] Nhận thông báo postgres_changes, gọi syncCloudBatches()...');
+                if (typeof window.syncCloudBatches === 'function') {
+                    window.syncCloudBatches();
+                } else if (BatchManager.syncCloudBatches) {
+                    BatchManager.syncCloudBatches();
                 }
             })
             .subscribe((status, err) => {
-                console.log('[Supabase Realtime] Trạng thái kết nối kênh:', status);
+                console.log('[Supabase Realtime] Trạng thái kết nối kênh batches-channel:', status);
                 if (err) console.error('[Supabase Realtime] Lỗi kênh:', err);
             });
 
         this.realtimeChannel = channel;
-        window.batchRealtimeChannel = channel;
+        window.batchesRealtimeChannel = channel;
         return channel;
     }
 };
 window.BatchManager = BatchManager;
-window.syncBatchesFromCloud = function() {
-    if (window.BatchManager && typeof window.BatchManager.syncBatchesFromCloud === 'function') {
-        return window.BatchManager.syncBatchesFromCloud();
+
+// 1 & 2. Khai báo các hàm toàn cục syncCloudBatches và listenCloudRealtime
+window.syncCloudBatches = function() {
+    if (window.BatchManager && typeof window.BatchManager.syncCloudBatches === 'function') {
+        return window.BatchManager.syncCloudBatches();
     }
 };
-window.subscribeBatchRealtime = function() {
-    if (window.BatchManager && typeof window.BatchManager.subscribeBatchRealtime === 'function') {
-        return window.BatchManager.subscribeBatchRealtime();
+window.listenCloudRealtime = function() {
+    if (window.BatchManager && typeof window.BatchManager.listenCloudRealtime === 'function') {
+        return window.BatchManager.listenCloudRealtime();
     }
 };
-// Giữ tương thích ngược với các tên hàm cũ
-window.loadBatchesFromSupabase = window.syncBatchesFromCloud;
-window.setupRealtimeBatches = window.subscribeBatchRealtime;
+window.submitNewBatch = function(event) {
+    if (window.BatchManager && typeof window.BatchManager.submitNewBatch === 'function') {
+        return window.BatchManager.submitNewBatch(event);
+    }
+};
+
+// Tương thích ngược với các tên gọi cũ trong ứng dụng
+window.syncBatchesFromCloud = window.syncCloudBatches;
+window.subscribeBatchRealtime = window.listenCloudRealtime;
+window.loadBatchesFromSupabase = window.syncCloudBatches;
+window.setupRealtimeBatches = window.listenCloudRealtime;
+BatchManager.syncBatchesFromCloud = BatchManager.syncCloudBatches;
+BatchManager.subscribeBatchRealtime = BatchManager.listenCloudRealtime;
 
 
 const ArchiveDBManager = {
@@ -20727,16 +20634,16 @@ const App = {
         }
 
         // 6. Tự động nạp dữ liệu Cloud và Lắng nghe Realtime 2 chiều từ Supabase
-        if (typeof window.syncBatchesFromCloud === 'function') {
-            window.syncBatchesFromCloud();
-        } else if (window.BatchManager && typeof window.BatchManager.syncBatchesFromCloud === 'function') {
-            window.BatchManager.syncBatchesFromCloud();
+        if (typeof window.syncCloudBatches === 'function') {
+            window.syncCloudBatches();
+        } else if (window.BatchManager && typeof window.BatchManager.syncCloudBatches === 'function') {
+            window.BatchManager.syncCloudBatches();
         }
 
-        if (typeof window.subscribeBatchRealtime === 'function') {
-            window.subscribeBatchRealtime();
-        } else if (window.BatchManager && typeof window.BatchManager.subscribeBatchRealtime === 'function') {
-            window.BatchManager.subscribeBatchRealtime();
+        if (typeof window.listenCloudRealtime === 'function') {
+            window.listenCloudRealtime();
+        } else if (window.BatchManager && typeof window.BatchManager.listenCloudRealtime === 'function') {
+            window.BatchManager.listenCloudRealtime();
         }
 
         const activeUser = window.RBACManager ? window.RBACManager.getActiveUser() : null;
@@ -22887,11 +22794,17 @@ window.IQCManager = IQCManager;
 
 window.App = App;
 
-// Khởi chạy an toàn khi DOM sẵn sàng
+// Khởi chạy an toàn khi DOM sẵn sàng (Kích hoạt tự động syncCloudBatches và listenCloudRealtime)
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { App.init(); });
+    document.addEventListener('DOMContentLoaded', () => {
+        App.init();
+        if (typeof window.syncCloudBatches === 'function') window.syncCloudBatches();
+        if (typeof window.listenCloudRealtime === 'function') window.listenCloudRealtime();
+    });
 } else {
     App.init();
+    if (typeof window.syncCloudBatches === 'function') window.syncCloudBatches();
+    if (typeof window.listenCloudRealtime === 'function') window.listenCloudRealtime();
 }
 
     </script>
