@@ -22060,7 +22060,7 @@ const IQCManager = {
         });
     },
 
-    saveForm(e) {
+    async saveForm(e) {
         if (e) {
             if (typeof e.preventDefault === 'function') e.preventDefault();
             if (typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -22172,24 +22172,36 @@ const IQCManager = {
             updatedAt: new Date().toISOString()
         };
 
-        // 3. Lưu object này vào mảng dữ liệu (App.state.iqcList) và localStorage
-        const currentList = this.getIQCList();
-        const existingIndex = currentList.findIndex(item => item.id === id);
-        if (existingIndex >= 0) {
-            currentList[existingIndex] = record;
-        } else {
-            currentList.unshift(record);
+        // 3. Thay vì lưu cục bộ, gọi SupabaseSyncManager.insertIQCMaterial()
+        try {
+            if (window.SupabaseSyncManager && typeof window.SupabaseSyncManager.insertIQCMaterial === 'function') {
+                const inserted = await window.SupabaseSyncManager.insertIQCMaterial(record);
+                if (inserted && inserted.id) {
+                    record.id = inserted.id;
+                }
+            } else {
+                const currentList = this.getIQCList();
+                const existingIndex = currentList.findIndex(item => item.id === id);
+                if (existingIndex >= 0) {
+                    currentList[existingIndex] = record;
+                } else {
+                    currentList.unshift(record);
+                }
+                this.saveIQCList(currentList);
+                const msg = `${isEdit ? 'Đã cập nhật' : 'Đã lưu thành công'} Phiếu IQC NVL [${record.materialName}] - Lô: ${lotNo || 'N/A'}`;
+                if (window.App && typeof window.App.showToast === 'function') {
+                    window.App.showToast(msg, 'success');
+                } else {
+                    alert(msg);
+                }
+            }
+        } catch (error) {
+            console.error('Lỗi khi lưu phiếu IQC:', error);
+            return;
         }
-        this.saveIQCList(currentList);
 
-        // 4. Cập nhật bộ lọc nhà cung cấp & thông báo
+        // 4. Cập nhật bộ lọc nhà cung cấp
         this.updateSupplierFilter();
-        const msg = `${isEdit ? 'Đã cập nhật' : 'Đã lưu thành công'} Phiếu IQC NVL [${record.materialName}] - Lô: ${lotNo || 'N/A'}`;
-        if (window.App && typeof window.App.showToast === 'function') {
-            window.App.showToast(msg, 'success');
-        } else {
-            alert(msg);
-        }
 
         // 5. Đóng modal & reset form
         this.closeModal();
@@ -22226,15 +22238,15 @@ const IQCManager = {
         if (searchVal) {
             filtered = filtered.filter(item => {
                 const ticket = (item.ticketNo || item.id || '').toLowerCase();
-                const mat = (item.materialName || '').toLowerCase();
-                const code = (item.itemCode || '').toLowerCase();
-                const lot = (item.lotNo || '').toLowerCase();
+                const mat = (item.materialName || item.material_name || '').toLowerCase();
+                const code = (item.itemCode || item.item_code || '').toLowerCase();
+                const lot = (item.lotNo || item.lot_no || '').toLowerCase();
                 const sup = (item.supplier || '').toLowerCase();
                 return ticket.includes(searchVal) || mat.includes(searchVal) || code.includes(searchVal) || lot.includes(searchVal) || sup.includes(searchVal);
             });
         }
         if (filterDate) {
-            filtered = filtered.filter(item => item.receiveDate === filterDate);
+            filtered = filtered.filter(item => (item.receiveDate || item.receive_date) === filterDate);
         }
         if (filterSupplier) {
             filtered = filtered.filter(item => item.supplier === filterSupplier);
@@ -22299,7 +22311,7 @@ const IQCManager = {
                         <i class="fa-solid fa-hashtag text-[10px] text-blue-400"></i>${item.ticketNo || item.id}
                     </div>
                     <div class="text-[11px] text-slate-400 mt-0.5">
-                        <i class="fa-regular fa-calendar mr-1"></i>${item.receiveDate || '—'}
+                        <i class="fa-regular fa-calendar mr-1"></i>${item.receiveDate || item.receive_date || '—'}
                     </div>
                 </td>
                 <td class="px-3 py-3">
@@ -22308,13 +22320,13 @@ const IQCManager = {
                 </td>
                 <td class="px-3 py-3">
                     <div class="font-bold text-slate-800 text-xs flex items-center gap-1.5 flex-wrap">
-                        <span>${item.materialName || '—'}</span>
+                        <span>${item.materialName || item.material_name || '—'}</span>
                         ${item.evidenceImageBase64 ? '<span class="inline-flex items-center gap-1 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 font-normal font-sans" title="Có đính kèm ảnh minh chứng tem nhãn"><i class="fa-solid fa-camera"></i> Ảnh</span>' : ''}
                     </div>
-                    <div class="text-[11px] font-mono text-slate-500 mt-0.5">Mã: <span class="font-semibold text-slate-700">${item.itemCode || '—'}</span></div>
+                    <div class="text-[11px] font-mono text-slate-500 mt-0.5">Mã: <span class="font-semibold text-slate-700">${item.itemCode || item.item_code || '—'}</span></div>
                 </td>
                 <td class="px-3 py-3 font-mono font-semibold text-slate-700 text-xs">
-                    ${item.lotNo || '—'}
+                    ${item.lotNo || item.lot_no || '—'}
                 </td>
                 <td class="px-3 py-3 text-right font-mono font-bold text-slate-800 text-xs">
                     ${item.quantity || '—'}
@@ -22852,10 +22864,137 @@ window.SupabaseSyncManager = {
         }
     },
 
-    // 3. Kích hoạt Radar lắng nghe Realtime (Đồng bộ tức thì mọi thiết bị)
+    // 3. Tải toàn bộ dữ liệu kiểm tra NVL (IQC) từ Cloud khi mở ứng dụng
+    fetchIQCMaterials: async function() {
+        try {
+            if (!window.supabaseClient) return;
+
+            const { data, error } = await window.supabaseClient
+                .from('iqc_materials')
+                .select('*')
+                .order('created_at', { ascending: false });
+            
+            if (error) throw error;
+
+            const normalizedList = (data || []).map(row => ({
+                ...row,
+                ticketNo: row.ticketNo || (row.id ? `IQC-${String(row.id).slice(0, 8).toUpperCase()}` : 'IQC-NVL'),
+                receiveDate: row.receiveDate || row.receive_date || '',
+                materialName: row.materialName || row.material_name || 'Nguyên vật liệu',
+                itemCode: row.itemCode || row.item_code || '',
+                lotNo: row.lotNo || row.lot_no || '',
+                quantity: row.quantity || '',
+                qcEval: row.qcEval || row.qc_eval || 'PHU_HOP',
+                decision: row.decision || 'NHAP_KHO',
+                status: row.status || ((row.decision === 'TRA_VE' || (row.qc_eval || row.qcEval) === 'KHONG_PHU_HOP') ? 'REJECT' : ((row.decision === 'CHO_XU_LY') ? 'HOLD' : 'PASS')),
+                checkerName: row.checkerName || row.checker_name || ''
+            }));
+
+            App.state.iqcList = normalizedList;
+            try {
+                localStorage.setItem('KIM_QC_IQC_LIST', JSON.stringify(normalizedList));
+            } catch (e) {
+                console.warn('Lỗi ghi cache IQC vào localStorage:', e);
+            }
+
+            if (window.IQCManager) {
+                if (typeof window.IQCManager.updateSupplierFilter === 'function') {
+                    window.IQCManager.updateSupplierFilter();
+                }
+                if (typeof window.IQCManager.renderTable === 'function') {
+                    window.IQCManager.renderTable();
+                }
+            }
+            console.log('✅ Đã đồng bộ dữ liệu IQC nguyên vật liệu từ Supabase.');
+        } catch (error) {
+            console.error('❌ Lỗi tải dữ liệu IQC từ Supabase:', error);
+            App.showToast('Lỗi tải dữ liệu IQC từ máy chủ', 'error');
+        }
+    },
+
+    // 4. Đẩy phiếu kiểm tra NVL mới lên Cloud
+    insertIQCMaterial: async function(newMaterialData) {
+        try {
+            if (!window.supabaseClient) throw new Error('Supabase client chưa sẵn sàng');
+
+            const payload = {
+                supplier: newMaterialData.supplier || null,
+                receive_date: newMaterialData.receive_date || newMaterialData.receiveDate || null,
+                material_name: newMaterialData.material_name || newMaterialData.materialName || null,
+                item_code: newMaterialData.item_code || newMaterialData.itemCode || null,
+                lot_no: newMaterialData.lot_no || newMaterialData.lotNo || null,
+                quantity: newMaterialData.quantity != null ? String(newMaterialData.quantity) : null,
+                qc_eval: newMaterialData.qc_eval || newMaterialData.qcEval || null,
+                decision: newMaterialData.decision || null,
+                checker_name: newMaterialData.checker_name || newMaterialData.checkerName || null
+            };
+
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (newMaterialData.id && uuidRegex.test(newMaterialData.id)) {
+                payload.id = newMaterialData.id;
+            }
+
+            const { data, error } = await window.supabaseClient
+                .from('iqc_materials')
+                .insert([payload])
+                .select();
+            
+            if (error) throw error;
+
+            const inserted = (data && data[0]) ? data[0] : payload;
+            const normalized = {
+                ...newMaterialData,
+                ...inserted,
+                id: inserted.id || newMaterialData.id,
+                ticketNo: newMaterialData.ticketNo || (inserted.id ? `IQC-${String(inserted.id).slice(0, 8).toUpperCase()}` : 'IQC-NVL'),
+                receiveDate: inserted.receive_date || newMaterialData.receiveDate || '',
+                materialName: inserted.material_name || newMaterialData.materialName || 'Nguyên vật liệu',
+                itemCode: inserted.item_code || newMaterialData.itemCode || '',
+                lotNo: inserted.lot_no || newMaterialData.lotNo || '',
+                quantity: inserted.quantity || newMaterialData.quantity || '',
+                qcEval: inserted.qc_eval || newMaterialData.qcEval || 'PHU_HOP',
+                decision: inserted.decision || newMaterialData.decision || 'NHAP_KHO',
+                checkerName: inserted.checker_name || newMaterialData.checkerName || '',
+                status: newMaterialData.status || ((inserted.decision === 'TRA_VE' || (inserted.qc_eval || inserted.qcEval) === 'KHONG_PHU_HOP') ? 'REJECT' : ((inserted.decision === 'CHO_XU_LY') ? 'HOLD' : 'PASS'))
+            };
+
+            if (!App.state.iqcList) App.state.iqcList = [];
+            const existingIndex = App.state.iqcList.findIndex(item => item.id === normalized.id || (newMaterialData.id && item.id === newMaterialData.id));
+            if (existingIndex >= 0) {
+                App.state.iqcList[existingIndex] = normalized;
+            } else {
+                App.state.iqcList.unshift(normalized);
+            }
+
+            try {
+                localStorage.setItem('KIM_QC_IQC_LIST', JSON.stringify(App.state.iqcList));
+            } catch (e) {
+                console.warn('Lỗi ghi cache IQC vào localStorage:', e);
+            }
+
+            if (window.IQCManager) {
+                if (typeof window.IQCManager.updateSupplierFilter === 'function') {
+                    window.IQCManager.updateSupplierFilter();
+                }
+                if (typeof window.IQCManager.renderTable === 'function') {
+                    window.IQCManager.renderTable();
+                }
+            }
+
+            App.showToast('Đã lưu phiếu IQC lên hệ thống thành công!', 'success');
+            return inserted;
+        } catch (error) {
+            console.error('❌ Lỗi lưu phiếu IQC:', error);
+            App.showToast('Lỗi đồng bộ lên máy chủ. Kiểm tra kết nối mạng.', 'error');
+            throw error;
+        }
+    },
+
+    // 5. Kích hoạt Radar lắng nghe Realtime (Đồng bộ tức thì mọi thiết bị)
     startRealtimeListener: function() {
         if (!window.supabaseClient) return;
 
+        // Channel 1: Lắng nghe mẻ sản xuất batches
         window.supabaseClient
           .channel('public:batches')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'batches' }, payload => {
@@ -22874,19 +23013,75 @@ window.SupabaseSyncManager = {
           })
           .subscribe((status) => {
               if (status === 'SUBSCRIBED') {
-                  console.log('📡 Radar Realtime đã kích hoạt. Sẵn sàng đồng bộ đa thiết bị.');
+                  console.log('📡 Radar Realtime Batches đã kích hoạt. Sẵn sàng đồng bộ đa thiết bị.');
+              }
+          });
+
+        // Channel 2: Lắng nghe phiếu kiểm tra NVL iqc_materials
+        window.supabaseClient
+          .channel('public:iqc_materials')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'iqc_materials' }, payload => {
+              const raw = payload.new;
+              const normalized = {
+                  ...raw,
+                  ticketNo: raw.ticketNo || (raw.id ? `IQC-${String(raw.id).slice(0, 8).toUpperCase()}` : 'IQC-NVL'),
+                  receiveDate: raw.receiveDate || raw.receive_date || '',
+                  materialName: raw.materialName || raw.material_name || 'Nguyên vật liệu',
+                  itemCode: raw.itemCode || raw.item_code || '',
+                  lotNo: raw.lotNo || raw.lot_no || '',
+                  quantity: raw.quantity || '',
+                  qcEval: raw.qcEval || raw.qc_eval || 'PHU_HOP',
+                  decision: raw.decision || 'NHAP_KHO',
+                  status: raw.status || ((raw.decision === 'TRA_VE' || (raw.qc_eval || raw.qcEval) === 'KHONG_PHU_HOP') ? 'REJECT' : ((raw.decision === 'CHO_XU_LY') ? 'HOLD' : 'PASS')),
+                  checkerName: raw.checkerName || raw.checker_name || ''
+              };
+
+              if (!App.state.iqcList) App.state.iqcList = [];
+              const index = App.state.iqcList.findIndex(b => b.id === normalized.id);
+              if (index !== -1) {
+                  App.state.iqcList[index] = { ...App.state.iqcList[index], ...normalized };
+              } else {
+                  App.state.iqcList.unshift(normalized);
+                  App.showToast(`📲 Có phiếu IQC mới vừa được thêm: ${normalized.materialName || normalized.ticketNo}`, 'info');
+              }
+
+              try {
+                  localStorage.setItem('KIM_QC_IQC_LIST', JSON.stringify(App.state.iqcList));
+              } catch (e) {
+                  console.warn('Lỗi ghi cache IQC vào localStorage:', e);
+              }
+
+              if (window.IQCManager) {
+                  if (typeof window.IQCManager.updateSupplierFilter === 'function') {
+                      window.IQCManager.updateSupplierFilter();
+                  }
+                  if (typeof window.IQCManager.renderTable === 'function') {
+                      window.IQCManager.renderTable();
+                  }
+              }
+          })
+          .subscribe((status) => {
+              if (status === 'SUBSCRIBED') {
+                  console.log('📡 Radar Realtime IQC đã kích hoạt. Sẵn sàng đồng bộ đa thiết bị.');
               }
           });
     }
 };
 
 // Kích hoạt tự động khi tải trang
-document.addEventListener('DOMContentLoaded', () => {
+const initSupabaseSync = () => {
     if (window.supabaseClient) {
         SupabaseSyncManager.fetchBatches();
+        SupabaseSyncManager.fetchIQCMaterials();
         SupabaseSyncManager.startRealtimeListener();
     }
-});
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSupabaseSync);
+} else {
+    initSupabaseSync();
+}
     </script>
 </body>
 </html>
