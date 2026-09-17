@@ -22808,5 +22808,85 @@ if (document.readyState === 'loading') {
 }
 
     </script>
+
+    <!-- Supabase Realtime Sync Module -->
+    <script>
+// ==========================================================================
+// MODULE: SUPABASE REALTIME SYNC (KIM QC PRO 2026)
+// ==========================================================================
+window.SupabaseSyncManager = {
+    // 1. Tải toàn bộ dữ liệu từ Cloud khi mở ứng dụng
+    fetchBatches: async function() {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('batches')
+                .select('*')
+                .order('mfgDate', { ascending: false }); // Sắp xếp theo ngày sản xuất mới nhất
+            
+            if (error) throw error;
+            
+            App.state.batches = data || [];
+            window.BatchManager.renderBatchTable(App.state.batches, App.state.selectedFilterDate, App.state.searchTerm);
+            console.log('✅ Đã đồng bộ dữ liệu mẻ sơn từ Supabase.');
+        } catch (error) {
+            console.error('❌ Lỗi tải dữ liệu Supabase:', error);
+            App.showToast('Lỗi tải dữ liệu từ máy chủ', 'error');
+        }
+    },
+
+    // 2. Đẩy mẻ sơn mới lên Cloud
+    insertBatch: async function(newBatchData) {
+        try {
+            const { data, error } = await window.supabaseClient
+                .from('batches')
+                .insert([newBatchData])
+                .select();
+            
+            if (error) throw error;
+            App.showToast('Đã lưu mẻ sơn lên hệ thống thành công!', 'success');
+            return data[0];
+        } catch (error) {
+            console.error('❌ Lỗi lưu mẻ sơn:', error);
+            App.showToast('Lỗi đồng bộ lên máy chủ. Kiểm tra kết nối mạng.', 'error');
+            throw error;
+        }
+    },
+
+    // 3. Kích hoạt Radar lắng nghe Realtime (Đồng bộ tức thì mọi thiết bị)
+    startRealtimeListener: function() {
+        if (!window.supabaseClient) return;
+
+        window.supabaseClient
+          .channel('public:batches')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'batches' }, payload => {
+              // Nhận lệnh thêm mới từ thiết bị khác
+              App.state.batches.unshift(payload.new);
+              window.BatchManager.renderBatchTable(App.state.batches, App.state.selectedFilterDate, App.state.searchTerm);
+              App.showToast(`📲 Có mẻ sơn mới vừa được thêm: ${payload.new.ticketNo}`, 'info');
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'batches' }, payload => {
+              // Nhận lệnh cập nhật từ thiết bị khác
+              const index = App.state.batches.findIndex(b => b.id === payload.new.id);
+              if (index !== -1) {
+                  App.state.batches[index] = payload.new;
+                  window.BatchManager.renderBatchTable(App.state.batches, App.state.selectedFilterDate, App.state.searchTerm);
+              }
+          })
+          .subscribe((status) => {
+              if (status === 'SUBSCRIBED') {
+                  console.log('📡 Radar Realtime đã kích hoạt. Sẵn sàng đồng bộ đa thiết bị.');
+              }
+          });
+    }
+};
+
+// Kích hoạt tự động khi tải trang
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.supabaseClient) {
+        SupabaseSyncManager.fetchBatches();
+        SupabaseSyncManager.startRealtimeListener();
+    }
+});
+    </script>
 </body>
 </html>
